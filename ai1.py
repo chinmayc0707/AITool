@@ -140,7 +140,7 @@ def _split(text, fn, tp):
     if not text:
         return []
     head = f"File: {fn} | Type: {tp}\n"
-    split = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    split = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=100)
     return [head + chunk for chunk in split.split_text(text)]
 
 def _process(path):
@@ -202,11 +202,11 @@ def _filters(q):
     types = {v for k, v in _TYPE_KW.items() if k in p}
     return names, types
 
-def build_ctx(q, k=5):
+def build_ctx(q, k=8):
     if not st.session_state.processed_hashes:
         return ""
     names, types = _filters(q)
-    docs = load_store().similarity_search(q, k=20)
+    docs = load_store().max_marginal_relevance_search(q, k=10, fetch_k=50)
     if names or types:
         docs = [d for d in docs if
                 ((not names) or (d.metadata.get("source", "").lower() in names)) and
@@ -291,6 +291,26 @@ def _handle(files):
         st.session_state.processed_uploads.add(uid)
     _save_session()
 
+def _delete_file(fn_to_del):
+    h_to_del = next((h for h, fn in st.session_state.hash2file.items() if fn == fn_to_del), None)
+    if not h_to_del:
+        return
+
+    st.session_state.hash2file.pop(h_to_del, None)
+    file_path = os.path.join(UPLOAD_DIR, fn_to_del)
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+    if os.path.isdir(VECTOR_DIR):
+        _safe_rmtree(VECTOR_DIR)
+
+    st.cache_resource.clear()
+    st.session_state.processed_hashes.clear()
+    st.session_state.source_files.clear()
+
+    _save_session()
+    st.rerun()
+
 def sidebar():
     with st.sidebar:
         st.header("⚙ Controls")
@@ -339,12 +359,30 @@ def show_files():
     if not st.session_state.source_files:
         return
     st.subheader("📂 Uploaded files")
-    for fn in sorted(st.session_state.source_files):
-        st.caption(f"• {fn} ({_file_type(fn)})")
+    for fn in sorted(list(st.session_state.source_files)):
+        col1, col2 = st.columns([10, 1])
+        with col1:
+            st.caption(f"• {fn} ({_file_type(fn)})")
+        with col2:
+            if st.button("❌", key=f"del_{fn}", help=f"Delete {fn}"):
+                _delete_file(fn)
 
 # ─────────────────────────── main ───────────────────────────────────────
 def main():
     st.set_page_config(page_title="Multi-Document Chat", layout="wide")
+    st.markdown("""
+        <style>
+            .stButton>button {
+                color: #ff4b4b;
+                border-color: #ff4b4b;
+            }
+            .stButton>button:hover {
+                color: white;
+                border-color: #ff4b4b;
+                background-color: #ff4b4b;
+            }
+        </style>
+    """, unsafe_allow_html=True)
     st.title("Chat with Multiple PDFs & Images")
 
     init_session()
