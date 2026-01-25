@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Document Chat</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <h2>⚙ Controls</h2>
+
+            <div class="control-group">
+                <label for="provider-select">LLM Provider</label>
+                <select id="provider-select">
+                    <option value="Local Ollama">Local Ollama</option>
+                    <option value="OpenRouter (free)">OpenRouter (free)</option>
+                    <option value="Mistral AI">Mistral AI</option>
+                </select>
+            </div>
+
+            <div class="control-group" id="api-key-group">
+                <label for="api-key">API Key</label>
+                <input type="password" id="api-key" placeholder="Enter API Key">
+                <button id="save-settings-btn">Save Settings</button>
+            </div>
+
+            <hr>
+
+            <div class="control-group">
+                <label>Upload PDFs</label>
+                <input type="file" id="pdf-upload" accept=".pdf" multiple>
+                <button class="upload-btn" onclick="uploadFiles('pdf-upload')">Upload PDF</button>
+            </div>
+
+            <div class="control-group">
+                <label>Upload Images</label>
+                <input type="file" id="img-upload" accept="image/*" multiple>
+                <button class="upload-btn" onclick="uploadFiles('img-upload')">Upload Image</button>
+            </div>
+
+            <div id="loading-spinner" class="spinner" style="display: none;"></div>
+
+            <hr>
+
+            <div class="file-list-section">
+                <h3>📂 Uploaded Files</h3>
+                <ul id="file-list">
+                    <!-- File items will be populated here -->
+                </ul>
+            </div>
+
+            <div class="bottom-controls">
+                <button id="clear-data-btn" class="danger-btn">Clear All Data</button>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-area">
+            <header>
+                <h1>Chat with Multiple PDFs & Images</h1>
+            </header>
+
+            <div id="messages-container" class="messages-container">
+                <div class="message assistant-message">
+                    <div class="message-content">
+                        Upload PDFs or images and ask me anything about them!
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <form id="chat-form">
+                    <input type="text" id="chat-input" placeholder="Ask a question..." autocomplete="off">
+                    <button type="submit"><i class="fas fa-paper-plane"></i></button>
+                </form>
+            </div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

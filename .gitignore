@@ -1,0 +1,6 @@
+*.log
+*.pkl
+uploaded_documents/
+vectorstore/
+__pycache__/
+.DS_Store
