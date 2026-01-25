@@ -286,8 +286,12 @@ def upload_files():
             GLOBAL_STATE.hash2file[h] = os.path.basename(path)
 
         # Add to DB
-        add_to_db(os.path.join(UPLOAD_DIR, GLOBAL_STATE.hash2file[h]), h)
-        processed.append(safe_filename)
+        try:
+            add_to_db(os.path.join(UPLOAD_DIR, GLOBAL_STATE.hash2file[h]), h)
+            processed.append(safe_filename)
+        except Exception as e:
+            print(f"Error processing {safe_filename}: {e}")
+            return jsonify({"error": str(e), "status": "error"}), 500
 
     GLOBAL_STATE.save_session()
     return jsonify({"status": "ok", "processed": processed})
