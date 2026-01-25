@@ -28,12 +28,13 @@ app.secret_key = os.urandom(24)
 UPLOAD_DIR = "uploaded_documents"
 VECTOR_DIR = "vectorstore"
 SESSION_FILE = "user_session.pkl"
-
+from dotenv import load_dotenv
+load_dotenv()
 PROVIDERS = {
     "OpenRouter (free)": {
         "url":   "https://openrouter.ai/api/v1/chat/completions",
-        "model": "google/gemma-2-9b-it:free",
-        "env":   "OPENROUTER_API_KEY",
+        "model": "nvidia/nemotron-3-nano-30b-a3b:free",
+        "env":   os.getenv("OPENROUTER_API_KEY"),
         "headers": {
             "Content-Type": "application/json",
             "HTTP-Referer": "https://your-app.example",
