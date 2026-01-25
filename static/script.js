@@ -135,7 +135,7 @@ async function handleChatSubmit(e) {
             if (done) break;
             const chunk = decoder.decode(value, { stream: true });
             fullResponse += chunk;
-            assistantMsgContent.textContent = fullResponse;
+            assistantMsgContent.innerHTML = DOMPurify.sanitize(marked.parse(fullResponse));
             // Scroll to bottom
             const container = document.getElementById('messages-container');
             container.scrollTop = container.scrollHeight;

@@ -263,6 +263,93 @@ header h1 {
 .assistant-message .message-content {
     background-color: var(--assistant-msg-bg);
     border: 1px solid var(--border-color);
+    white-space: normal; /* Allow Markdown to flow */
+}
+
+/* Markdown Styles for Assistant Messages */
+.assistant-message .message-content p {
+    margin-bottom: 0.8rem;
+}
+
+.assistant-message .message-content p:last-child {
+    margin-bottom: 0;
+}
+
+.assistant-message .message-content ul,
+.assistant-message .message-content ol {
+    margin-bottom: 0.8rem;
+    padding-left: 1.5rem;
+}
+
+.assistant-message .message-content li {
+    margin-bottom: 0.3rem;
+}
+
+.assistant-message .message-content h1,
+.assistant-message .message-content h2,
+.assistant-message .message-content h3,
+.assistant-message .message-content h4 {
+    margin-top: 1rem;
+    margin-bottom: 0.6rem;
+    font-weight: 600;
+    color: #fff;
+}
+
+.assistant-message .message-content code {
+    background-color: rgba(255, 255, 255, 0.1);
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+}
+
+.assistant-message .message-content pre {
+    background-color: #1e2126;
+    padding: 1rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin-bottom: 0.8rem;
+    border: 1px solid var(--border-color);
+}
+
+.assistant-message .message-content pre code {
+    background-color: transparent;
+    padding: 0;
+    color: #e0e0e0;
+}
+
+.assistant-message .message-content a {
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.assistant-message .message-content a:hover {
+    text-decoration: underline;
+}
+
+.assistant-message .message-content blockquote {
+    border-left: 3px solid var(--primary-color);
+    padding-left: 1rem;
+    margin-left: 0;
+    margin-bottom: 0.8rem;
+    color: #a0a0a0;
+}
+
+.assistant-message .message-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-bottom: 0.8rem;
+}
+
+.assistant-message .message-content th,
+.assistant-message .message-content td {
+    border: 1px solid var(--border-color);
+    padding: 0.5rem;
+    text-align: left;
+}
+
+.assistant-message .message-content th {
+    background-color: rgba(255, 255, 255, 0.05);
 }
 
 .user-message {
