@@ -32,7 +32,7 @@ SESSION_FILE = "user_session.pkl"
 PROVIDERS = {
     "OpenRouter (free)": {
         "url":   "https://openrouter.ai/api/v1/chat/completions",
-        "model": "mistralai/mistral-7b-instruct:free",
+        "model": "google/gemma-2-9b-it:free",
         "env":   "OPENROUTER_API_KEY",
         "headers": {
             "Content-Type": "application/json",
@@ -368,7 +368,12 @@ def chat():
     def generate():
         try:
             with requests.post(p["url"], json=req_data, headers=hdr, stream=True, timeout=90) as r:
-                r.raise_for_status()
+                # Better error handling for 4xx/5xx
+                if not r.ok:
+                    yield f"Error {r.status_code}: {r.text}"
+                    return
+
+                # r.raise_for_status() # Already checked above
                 for token in _stream_iterator(r, p["stream_style"]):
                     yield token
         except Exception as e:
