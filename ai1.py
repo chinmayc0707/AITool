@@ -1,7 +1,7 @@
 # ───────────────────────── Chat with Multiple PDFs & Images ──────────────
 # perpl.py  –  persistent keys + files   2025-08-22
 
-import os, json, shutil, stat, time, gc, itertools, hashlib, pickle
+import os, json, shutil, stat, time, gc, itertools, hashlib
 from typing import List, Tuple
 import streamlit as st
 import requests, pdfplumber, faiss, pytesseract
@@ -12,17 +12,19 @@ from langchain.vectorstores import FAISS
 from langchain.docstore import InMemoryDocstore
 
 # ──────────────────── persistent session helpers ────────────────────────
-SESSION_FILE = "user_session.pkl"   # stores {"api_key": str, "files": {hash: filename}}
+SESSION_FILE = "user_session.json"   # stores {"api_key": str, "files": {hash: filename}}
 
 def _save_session():
     sess = {"api_key": st.session_state.api_key,
             "files":  st.session_state.hash2file}
-    pickle.dump(sess, open(SESSION_FILE, "wb"))
+    with open(SESSION_FILE, "w") as f:
+        json.dump(sess, f)
 
 def _load_session():
     if os.path.exists(SESSION_FILE):
         try:
-            return pickle.load(open(SESSION_FILE, "rb"))
+            with open(SESSION_FILE, "r") as f:
+                return json.load(f)
         except Exception:
             pass
     return {"api_key": "", "files": {}}
@@ -282,7 +284,7 @@ def _handle(files):
             data = u.getvalue()
             h = _sha256(data)
             if h not in st.session_state.hash2file:
-                path = _dedup_path(u.name)
+                path = _dedup_path(os.path.basename(u.name))
                 with open(path, "wb") as f:
                     f.write(data)
                 st.session_state.hash2file[h] = os.path.basename(path)
