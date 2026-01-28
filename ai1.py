@@ -1,7 +1,7 @@
 # ───────────────────────── Chat with Multiple PDFs & Images ──────────────
-# perpl.py  –  persistent keys + files   2025-08-22
+# perpl.py  –  in-memory session (secure)   2025-08-22
 
-import os, json, shutil, stat, time, gc, itertools, hashlib
+import os, json, gc, hashlib, io
 from typing import List, Tuple
 import streamlit as st
 import requests, pdfplumber, faiss, pytesseract
@@ -11,28 +11,7 @@ from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.docstore import InMemoryDocstore
 
-# ──────────────────── persistent session helpers ────────────────────────
-SESSION_FILE = "user_session.json"   # stores {"api_key": str, "files": {hash: filename}}
-
-def _save_session():
-    sess = {"api_key": st.session_state.api_key,
-            "files":  st.session_state.hash2file}
-    with open(SESSION_FILE, "w") as f:
-        json.dump(sess, f)
-
-def _load_session():
-    if os.path.exists(SESSION_FILE):
-        try:
-            with open(SESSION_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"api_key": "", "files": {}}
-
 # ───────────────────── constants ─────────────────────────────────────────
-UPLOAD_DIR = "uploaded_documents"
-VECTOR_DIR = "vectorstore"
-
 PROVIDERS = {
     "OpenRouter (free)": {
         "url":   "https://openrouter.ai/api/v1/chat/completions",
@@ -62,8 +41,6 @@ PROVIDERS = {
     }
 }
 
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 # ────────── helper: strip legacy hash prefix ─────────────────────────────
 def display_name(fn: str) -> str:
     if "_" not in fn:
@@ -72,34 +49,11 @@ def display_name(fn: str) -> str:
     ok = len(head) == 64 and all(c in "0123456789abcdefABCDEF" for c in head)
     return tail if ok else fn
 
-# ───────────── helpers: Windows-safe rmtree ──────────────────────────────
-def _on_rm_error(func, path, _):
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
-
-def _safe_rmtree(path, tries=5, delay=.5):
-    for _ in range(tries):
-        try:
-            shutil.rmtree(path, onerror=_on_rm_error)
-            return
-        except PermissionError:
-            time.sleep(delay)
-    shutil.rmtree(path, onerror=_on_rm_error)
-
 # ────────────────────────── utilities ────────────────────────────────────
 def _sha256(b): return hashlib.sha256(b).hexdigest()
 
-def _dedup_path(name):
-    base, ext = os.path.splitext(name)
-    for i in itertools.count():
-        cand = f"{base}_{i}{ext}" if i else name
-        full = os.path.join(UPLOAD_DIR, cand)
-        if not os.path.exists(full):
-            return full
-
 # ─────────────────────── Streamlit state ────────────────────────────────
 def init_session():
-    saved = _load_session()
     defaults = dict(
         messages=[{"role": "assistant",
                    "content": "Upload PDFs or images and ask me anything about them!"}],
@@ -108,8 +62,9 @@ def init_session():
         source_files=set(),
         uploader_key=0,
         provider="Local Ollama",
-        api_key=saved["api_key"],
-        hash2file=saved["files"]
+        api_key="",
+        hash2file={},
+        vectorstore=None
     )
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
@@ -117,10 +72,10 @@ def init_session():
 # ───────────────────── PDF / OCR helpers ────────────────────────────────
 def _file_type(fn): return "PDF" if fn.lower().endswith(".pdf") else "IMAGE"
 
-def _extract_pdf(path):
+def _extract_pdf(file_obj, fn):
     txt = ""
     try:
-        with pdfplumber.open(path) as pdf:
+        with pdfplumber.open(file_obj) as pdf:
             for pg in pdf.pages:
                 if (t := pg.extract_text()):
                     txt += t + "\n"
@@ -128,14 +83,14 @@ def _extract_pdf(path):
                     for row in tbl:
                         txt += " | ".join(c or "" for c in row) + "\n"
     except Exception as e:
-        st.error(f"Error reading {display_name(os.path.basename(path))}: {e}")
+        st.error(f"Error reading {fn}: {e}")
     return txt.strip()
 
-def _extract_img(path):
+def _extract_img(file_obj, fn):
     try:
-        return pytesseract.image_to_string(Image.open(path)).strip()
+        return pytesseract.image_to_string(Image.open(file_obj)).strip()
     except Exception as e:
-        st.error(f"OCR failed for {display_name(os.path.basename(path))}: {e}")
+        st.error(f"OCR failed for {fn}: {e}")
         return ""
 
 def _split(text, fn, tp):
@@ -145,10 +100,9 @@ def _split(text, fn, tp):
     split = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     return [head + chunk for chunk in split.split_text(text)]
 
-def _process(path):
-    fn = display_name(os.path.basename(path))
+def _process(file_obj, fn):
     tp = _file_type(fn)
-    txt = _extract_pdf(path) if tp == "PDF" else _extract_img(path)
+    txt = _extract_pdf(file_obj, fn) if tp == "PDF" else _extract_img(file_obj, fn)
     return _split(txt, fn, tp), tp
 
 # ─────────────────────── FAISS plumbing ─────────────────────────────────
@@ -159,39 +113,31 @@ def _new_store():
     dim = len(_emb().embed_query("x"))
     return FAISS(_emb(), faiss.IndexFlatL2(dim), InMemoryDocstore({}), {})
 
-@st.cache_resource
-def load_store():
-    try:
-        return FAISS.load_local(VECTOR_DIR, _emb())
-    except Exception:
-        return _new_store()
-
-def persist(store): store.save_local(VECTOR_DIR)
+def get_store():
+    if st.session_state.vectorstore is None:
+        st.session_state.vectorstore = _new_store()
+    return st.session_state.vectorstore
 
 # ───────────────── ingestion ────────────────────────────────────────────
-def add_to_db(path, h):
+def add_to_db(file_obj, h, original_filename):
     if h in st.session_state.processed_hashes:
         return
-    chunks, tp = _process(path)
+
+    # We use the original filename for display
+    fn = display_name(original_filename)
+    chunks, tp = _process(file_obj, fn)
+
     if not chunks:
-        st.warning(f"Skipped empty/unsupported: {display_name(os.path.basename(path))}")
+        st.warning(f"Skipped empty/unsupported: {fn}")
         return
-    fn = display_name(os.path.basename(path))
-    store = load_store()
+
+    store = get_store()
     store.add_texts(chunks, metadatas=[{"source": fn, "type": tp}] * len(chunks))
-    persist(store)
+    # No persist() needed for in-memory
+
     st.session_state.processed_hashes.add(h)
     st.session_state.source_files.add(fn.lower())
-
-# ───────────────── bootstrap saved files ────────────────────────────────
-def _bootstrap_saved_files():
-    for h, fn in list(st.session_state.hash2file.items()):
-        full = os.path.join(UPLOAD_DIR, fn)
-        if os.path.exists(full):
-            add_to_db(full, h)
-        else:                                # file missing on disk
-            st.session_state.hash2file.pop(h, None)
-    _save_session()
+    st.session_state.hash2file[h] = fn
 
 # ───────────────── retrieval helpers ────────────────────────────────────
 _TYPE_KW = {"pdf": "PDF", "document": "PDF",
@@ -208,7 +154,9 @@ def build_ctx(q, k=5):
     if not st.session_state.processed_hashes:
         return ""
     names, types = _filters(q)
-    docs = load_store().similarity_search(q, k=20)
+    # Use get_store() instead of load_store()
+    store = get_store()
+    docs = store.similarity_search(q, k=20)
     if names or types:
         docs = [d for d in docs if
                 ((not names) or (d.metadata.get("source", "").lower() in names)) and
@@ -284,14 +232,12 @@ def _handle(files):
             data = u.getvalue()
             h = _sha256(data)
             if h not in st.session_state.hash2file:
-                path = _dedup_path(os.path.basename(u.name))
-                with open(path, "wb") as f:
-                    f.write(data)
-                st.session_state.hash2file[h] = os.path.basename(path)
-            add_to_db(os.path.join(UPLOAD_DIR, st.session_state.hash2file[h]), h)
-            st.success(f"Added: {u.name}")
+                # Pass BytesIO object to avoid writing to disk
+                add_to_db(io.BytesIO(data), h, u.name)
+                st.success(f"Added: {u.name}")
+            else:
+                st.info(f"Already processed: {u.name}")
         st.session_state.processed_uploads.add(uid)
-    _save_session()
 
 def sidebar():
     with st.sidebar:
@@ -312,7 +258,7 @@ def sidebar():
             )
             if k != st.session_state.api_key:
                 st.session_state.api_key = k
-                _save_session()
+                # No saving to disk
 
         _handle(st.file_uploader(
             "Upload PDFs", type="pdf", accept_multiple_files=True,
@@ -325,12 +271,6 @@ def sidebar():
         ))
 
         if st.button("Clear all data"):
-            for pth in (VECTOR_DIR, UPLOAD_DIR, SESSION_FILE):
-                if os.path.isdir(pth):
-                    _safe_rmtree(pth)
-                elif os.path.isfile(pth):
-                    os.remove(pth)
-            os.makedirs(UPLOAD_DIR, exist_ok=True)
             st.cache_resource.clear()
             st.session_state.clear()
             gc.collect()
@@ -350,7 +290,6 @@ def main():
     st.title("Chat with Multiple PDFs & Images")
 
     init_session()
-    _bootstrap_saved_files()
     sidebar()
     show_files()
 

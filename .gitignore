@@ -1,0 +1,7 @@
+user_session.json
+uploaded_documents/
+vectorstore/
+__pycache__/
+*.pyc
+.env
+venv/
