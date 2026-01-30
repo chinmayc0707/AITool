@@ -50,7 +50,11 @@ def display_name(fn: str) -> str:
     return tail if ok else fn
 
 # ────────────────────────── utilities ────────────────────────────────────
-def _sha256(b): return hashlib.sha256(b).hexdigest()
+def _sha256(fobj):
+    h = hashlib.sha256()
+    for chunk in iter(lambda: fobj.read(4096), b""):
+        h.update(chunk)
+    return h.hexdigest()
 
 # ─────────────────────── Streamlit state ────────────────────────────────
 def init_session():
@@ -215,8 +219,7 @@ def _handle(files):
         if uid in st.session_state.processed_uploads:
             continue
         with st.spinner(f"Processing {u.name} …"):
-            data = u.read()
-            h = _sha256(data)
+            h = _sha256(u)
             u.seek(0)
             add_to_db(u, u.name, h)
             st.success(f"Added: {u.name}")
