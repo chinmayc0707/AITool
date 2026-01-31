@@ -70,7 +70,8 @@ class TestFix(unittest.TestCase):
         mock_file = MagicMock()
         mock_file.name = "test.pdf"
         mock_file.size = 1234
-        mock_file.read.return_value = b"fake content"
+        # Simulate chunked reading: return data then empty bytes to signal EOF
+        mock_file.read.side_effect = [b"fake content", b""]
         mock_file.seek = MagicMock()
 
         # Mock _process to return some chunks
@@ -82,6 +83,8 @@ class TestFix(unittest.TestCase):
 
             # Verify file was read and reset
             mock_file.read.assert_called()
+            # It should be called at least twice (content + EOF)
+            self.assertGreaterEqual(mock_file.read.call_count, 2)
             mock_file.seek.assert_called_with(0)
 
             # Verify _process was called with file object
@@ -111,6 +114,41 @@ class TestFix(unittest.TestCase):
             fobj = MagicMock()
             ai1._extract_pdf(fobj, "test.pdf")
             mock_pdf_open.assert_called_with(fobj)
+
+    def test_handle_upload_chunked(self):
+        """Test that _handle reads file in chunks to prevent DoS."""
+        ai1.init_session()
+        mock_file = MagicMock()
+        mock_file.name = "large.pdf"
+        mock_file.size = 100000
+        # return 2 chunks then EOF
+        mock_file.read.side_effect = [b"A" * 65536, b"B" * 34464, b""]
+        mock_file.seek = MagicMock()
+
+        with patch("ai1._process") as mock_process:
+            mock_process.return_value = ([], "PDF")
+            ai1._handle([mock_file])
+
+            # Check calls to read
+            # Must be called with an integer argument (chunk size)
+            calls = mock_file.read.mock_calls
+            for c in calls:
+                # mock_calls entries are Call objects, which can be unpacked as (name, args, kwargs)
+                # or just use .args
+                if not c.args:
+                   # It might be __enter__ or similar if used as context manager,
+                   # but here read() is simple method.
+                   # Actually, if read() is called without args, args will be empty tuple.
+                   pass
+
+                # If it's a call to read, check args
+                # We expect read(65536)
+                if c.args:
+                     self.assertTrue(isinstance(c.args[0], int), "read() called without size limit")
+                     self.assertEqual(c.args[0], 65536)
+                else:
+                     # call without args?
+                     self.fail("read() called without arguments")
 
 if __name__ == "__main__":
     unittest.main()
