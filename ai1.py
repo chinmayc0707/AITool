@@ -215,8 +215,10 @@ def _handle(files):
         if uid in st.session_state.processed_uploads:
             continue
         with st.spinner(f"Processing {u.name} …"):
-            data = u.read()
-            h = _sha256(data)
+            sha = hashlib.sha256()
+            while chunk := u.read(8192):
+                sha.update(chunk)
+            h = sha.hexdigest()
             u.seek(0)
             add_to_db(u, u.name, h)
             st.success(f"Added: {u.name}")
