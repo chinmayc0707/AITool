@@ -70,7 +70,8 @@ class TestFix(unittest.TestCase):
         mock_file = MagicMock()
         mock_file.name = "test.pdf"
         mock_file.size = 1234
-        mock_file.read.return_value = b"fake content"
+        # Simulate chunked reading: return data then empty bytes
+        mock_file.read.side_effect = [b"fake content", b""]
         mock_file.seek = MagicMock()
 
         # Mock _process to return some chunks
@@ -80,8 +81,18 @@ class TestFix(unittest.TestCase):
             # Call _handle
             ai1._handle([mock_file])
 
-            # Verify file was read and reset
+            # Verify file was read in chunks (checked by checking call args)
+            # We expect at least one call with an integer argument (chunk size)
             mock_file.read.assert_called()
+            # Check that read was called with an argument (chunk size) at least once
+            # Iterate over all calls to read
+            has_chunk_size = False
+            for call in mock_file.read.mock_calls:
+                if call.args and isinstance(call.args[0], int):
+                    has_chunk_size = True
+                    break
+            self.assertTrue(has_chunk_size, "File should be read with a chunk size")
+
             mock_file.seek.assert_called_with(0)
 
             # Verify _process was called with file object
