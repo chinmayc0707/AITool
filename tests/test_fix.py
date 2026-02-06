@@ -70,7 +70,8 @@ class TestFix(unittest.TestCase):
         mock_file = MagicMock()
         mock_file.name = "test.pdf"
         mock_file.size = 1234
-        mock_file.read.return_value = b"fake content"
+        # Mock read to return chunk then empty bytes to simulate EOF
+        mock_file.read.side_effect = [b"fake content", b""]
         mock_file.seek = MagicMock()
 
         # Mock _process to return some chunks
@@ -80,8 +81,10 @@ class TestFix(unittest.TestCase):
             # Call _handle
             ai1._handle([mock_file])
 
-            # Verify file was read and reset
-            mock_file.read.assert_called()
+            # Verify file was read with chunk size
+            mock_file.read.assert_called_with(8192)
+            # Should be called twice (once for content, once for EOF)
+            self.assertEqual(mock_file.read.call_count, 2)
             mock_file.seek.assert_called_with(0)
 
             # Verify _process was called with file object
