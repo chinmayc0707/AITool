@@ -11,6 +11,9 @@ from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.docstore import InMemoryDocstore
 
+# Set a reasonable limit for image pixels to prevent decompression bombs
+Image.MAX_IMAGE_PIXELS = 100_000_000
+
 # ───────────────────── constants ─────────────────────────────────────────
 PROVIDERS = {
     "OpenRouter (free)": {
@@ -50,7 +53,7 @@ def display_name(fn: str) -> str:
     return tail if ok else fn
 
 # ────────────────────────── utilities ────────────────────────────────────
-def _sha256(b): return hashlib.sha256(b).hexdigest()
+# _sha256 helper removed as it was unsafe for large files (read all into memory)
 
 # ─────────────────────── Streamlit state ────────────────────────────────
 def init_session():
@@ -215,8 +218,11 @@ def _handle(files):
         if uid in st.session_state.processed_uploads:
             continue
         with st.spinner(f"Processing {u.name} …"):
-            data = u.read()
-            h = _sha256(data)
+            # Use incremental hashing to avoid loading large files into memory
+            sha256_hash = hashlib.sha256()
+            for byte_block in iter(lambda: u.read(8192), b""):
+                sha256_hash.update(byte_block)
+            h = sha256_hash.hexdigest()
             u.seek(0)
             add_to_db(u, u.name, h)
             st.success(f"Added: {u.name}")
