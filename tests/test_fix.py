@@ -70,7 +70,8 @@ class TestFix(unittest.TestCase):
         mock_file = MagicMock()
         mock_file.name = "test.pdf"
         mock_file.size = 1234
-        mock_file.read.return_value = b"fake content"
+        # Simulate chunked reading: returns data then empty bytes to stop iteration
+        mock_file.read.side_effect = [b"chunk1", b"chunk2", b""]
         mock_file.seek = MagicMock()
 
         # Mock _process to return some chunks
