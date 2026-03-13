@@ -32,6 +32,7 @@ sys.modules["langchain.embeddings"] = MagicMock()
 sys.modules["langchain.vectorstores"] = MagicMock()
 sys.modules["langchain.docstore"] = MagicMock()
 sys.modules["faiss"] = MagicMock()
+sys.modules["sentence_transformers"] = MagicMock()
 
 # Now import the module under test
 import ai1

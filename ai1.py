@@ -72,6 +72,7 @@ def get_openrouter_models():
     except Exception:
         return ["mistralai/mistral-7b-instruct:free", "openai/gpt-3.5-turbo", "meta-llama/llama-3-8b-instruct"]
 
+@st.cache_data(ttl=3600)
 def get_ollama_models(host):
     try:
         r = requests.get(f"{host}/api/tags", timeout=2)
