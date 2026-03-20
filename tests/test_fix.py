@@ -19,6 +19,7 @@ mock_st.cache_resource = lambda func: func
 mock_st.spinner = MagicMock(return_value=MagicMock(__enter__=lambda self: None, __exit__=lambda *args: None))
 mock_st.sidebar = MagicMock(__enter__=lambda self: None, __exit__=lambda *args: None)
 sys.modules["streamlit"] = mock_st
+sys.modules["sentence_transformers"] = MagicMock()
 
 # Also mock pdfplumber and pytesseract and PIL to avoid dependencies or file ops
 sys.modules["requests"] = MagicMock()
