@@ -219,8 +219,8 @@ _TYPE_KW = {"pdf": "PDF", "document": "PDF",
 
 def _filters(q):
     p = q.lower()
-    names = [n for n in st.session_state.source_files
-             if n in p or os.path.splitext(n)[0] in p]
+    names = {n for n in st.session_state.source_files
+             if n in p or os.path.splitext(n)[0] in p}
     types = {v for k, v in _TYPE_KW.items() if k in p}
     return names, types
 
