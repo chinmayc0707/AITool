@@ -137,18 +137,18 @@ def init_session():
 def _file_type(fn): return "PDF" if fn.lower().endswith(".pdf") else "IMAGE"
 
 def _extract_pdf(path):
-    txt = ""
+    parts = []
     try:
         with pdfplumber.open(path) as pdf:
             for pg in pdf.pages:
                 if (t := pg.extract_text()):
-                    txt += t + "\n"
+                    parts.append(t + "\n")
                 for tbl in pg.extract_tables():
                     for row in tbl:
-                        txt += " | ".join(c or "" for c in row) + "\n"
+                        parts.append(" | ".join(c or "" for c in row) + "\n")
     except Exception as e:
         st.error(f"Error reading {display_name(os.path.basename(path))}: {e}")
-    return txt.strip()
+    return "".join(parts).strip()
 
 def _extract_img(path):
     try:
