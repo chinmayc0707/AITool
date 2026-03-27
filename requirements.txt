@@ -1,10 +1,10 @@
-streamlit
-requests
-pdfplumber
-faiss-cpu
-pytesseract
-Pillow
+streamlit>=1.32.0
+requests>=2.31.0
+pdfplumber>=0.10.3
+faiss-cpu>=1.7.4
+pytesseract>=0.3.10
+Pillow>=10.2.0
 langchain==0.0.353         # keep the old import path intact
-huggingface_hub>=0.23.0     # helper lib for HF models
+huggingface_hub>=0.23.0    # helper lib for HF models
 sentence-transformers>=2.7.0
-torch>=2.0                  # CPU-only build is fine on Streamlit Cloud
+torch>=2.0                 # CPU-only build is fine on Streamlit Cloud
