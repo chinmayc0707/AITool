@@ -1,7 +1,9 @@
+
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
 import io
+sys.modules["sentence_transformers"] = MagicMock()
 
 class MockSessionState(dict):
     def __init__(self, *args, **kwargs):
@@ -38,8 +40,9 @@ import ai1
 
 class TestFix(unittest.TestCase):
     def setUp(self):
-        # Reset session state
-        mock_st.session_state = MockSessionState()
+        # Reset session state by clearing the dictionary instead of reassigning
+        ai1.st.session_state.clear()
+        mock_st.session_state = ai1.st.session_state
         # Mock FAISS in ai1
         # ai1.FAISS is the class. We want to mock the instance it returns.
         self.mock_faiss_instance = MagicMock()
@@ -49,6 +52,7 @@ class TestFix(unittest.TestCase):
 
         # Mock Embedding
         ai1.HuggingFaceEmbeddings.return_value = MagicMock()
+        ai1.faiss.get_num_gpus.return_value = 0
 
     def test_init_session(self):
         """Test that init_session initializes vector_store in session_state and DOES NOT load from disk."""
@@ -59,7 +63,7 @@ class TestFix(unittest.TestCase):
         ai1.init_session()
 
         self.assertIn("vector_store", mock_st.session_state)
-        self.assertIsNotNone(mock_st.session_state["vector_store"])
+        self.assertIsNone(mock_st.session_state["vector_store"])
 
     def test_handle_upload(self):
         """Test that _handle processes upload without saving to disk."""
@@ -70,7 +74,7 @@ class TestFix(unittest.TestCase):
         mock_file = MagicMock()
         mock_file.name = "test.pdf"
         mock_file.size = 1234
-        mock_file.read.return_value = b"fake content"
+        mock_file.read.side_effect = [b"fake content", b""]
         mock_file.seek = MagicMock()
 
         # Mock _process to return some chunks

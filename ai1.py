@@ -7,26 +7,11 @@ from sentence_transformers import SentenceTransformer
 import streamlit as st
 import requests, pdfplumber, faiss, pytesseract
 from PIL import Image
+Image.MAX_IMAGE_PIXELS = 100_000_000
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.docstore import InMemoryDocstore
-
-# ──────────────────── persistent session helpers ────────────────────────
-SESSION_FILE = "user_session.pkl"   # stores {"api_key": str, "files": {hash: filename}}
-
-def _save_session():
-    sess = {"api_key": st.session_state.api_key,
-            "files":  st.session_state.hash2file}
-    pickle.dump(sess, open(SESSION_FILE, "wb"))
-
-def _load_session():
-    if os.path.exists(SESSION_FILE):
-        try:
-            return pickle.load(open(SESSION_FILE, "rb"))
-        except Exception:
-            pass
-    return {"api_key": "", "files": {}}
 
 # ───────────────────── constants ─────────────────────────────────────────
 UPLOAD_DIR = "uploaded_documents"
@@ -72,6 +57,7 @@ def get_openrouter_models():
     except Exception:
         return ["mistralai/mistral-7b-instruct:free", "openai/gpt-3.5-turbo", "meta-llama/llama-3-8b-instruct"]
 
+@st.cache_data(ttl=3600)
 def get_ollama_models(host):
     try:
         r = requests.get(f"{host}/api/tags", timeout=2)
@@ -89,33 +75,9 @@ def display_name(fn: str) -> str:
     return tail if ok else fn
 
 # ───────────── helpers: Windows-safe rmtree ──────────────────────────────
-def _on_rm_error(func, path, _):
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
-
-def _safe_rmtree(path, tries=5, delay=.5):
-    for _ in range(tries):
-        try:
-            shutil.rmtree(path, onerror=_on_rm_error)
-            return
-        except PermissionError:
-            time.sleep(delay)
-    shutil.rmtree(path, onerror=_on_rm_error)
-
-# ────────────────────────── utilities ────────────────────────────────────
 def _sha256(b): return hashlib.sha256(b).hexdigest()
 
-def _dedup_path(name):
-    base, ext = os.path.splitext(name)
-    for i in itertools.count():
-        cand = f"{base}_{i}{ext}" if i else name
-        full = os.path.join(UPLOAD_DIR, cand)
-        if not os.path.exists(full):
-            return full
-
-# ─────────────────────── Streamlit state ────────────────────────────────
 def init_session():
-    saved = _load_session()
     defaults = dict(
         messages=[{"role": "assistant",
                    "content": "Upload PDFs or images and ask me anything about them!"}],
@@ -127,8 +89,9 @@ def init_session():
         ollama_host="http://localhost:11434",
         ollama_model="mistral",
         openrouter_model="mistralai/mistral-7b-instruct:free",
-        api_key=saved["api_key"],
-        hash2file=saved["files"]
+        api_key="",
+        hash2file={},
+        vector_store=None
     )
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
@@ -136,39 +99,43 @@ def init_session():
 # ───────────────────── PDF / OCR helpers ────────────────────────────────
 def _file_type(fn): return "PDF" if fn.lower().endswith(".pdf") else "IMAGE"
 
-def _extract_pdf(path):
-    txt = ""
+def _extract_pdf(fobj, fn):
+    txt_parts = []
     try:
-        with pdfplumber.open(path) as pdf:
+        with pdfplumber.open(fobj) as pdf:
             for pg in pdf.pages:
                 if (t := pg.extract_text()):
-                    txt += t + "\n"
+                    txt_parts.append(t + "\n")
                 for tbl in pg.extract_tables():
                     for row in tbl:
-                        txt += " | ".join(c or "" for c in row) + "\n"
+                        txt_parts.append(" | ".join(c or "" for c in row) + "\n")
     except Exception as e:
-        st.error(f"Error reading {display_name(os.path.basename(path))}: {e}")
-    return txt.strip()
+        st.error(f"Error reading {display_name(fn)}: {e}")
+    return "".join(txt_parts).strip()
 
-def _extract_img(path):
+def _extract_img(fobj, fn):
     try:
-        return pytesseract.image_to_string(Image.open(path)).strip()
+        return pytesseract.image_to_string(Image.open(fobj)).strip()
     except Exception as e:
-        st.error(f"OCR failed for {display_name(os.path.basename(path))}: {e}")
+        st.error(f"OCR failed for {display_name(fn)}: {e}")
         return ""
+
+@st.cache_resource
+def _get_splitter():
+    return RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
 
 def _split(text, fn, tp):
     if not text:
         return []
     head = f"File: {fn} | Type: {tp}\n"
-    split = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    split = _get_splitter()
     return [head + chunk for chunk in split.split_text(text)]
 
-def _process(path):
-    fn = display_name(os.path.basename(path))
-    tp = _file_type(fn)
-    txt = _extract_pdf(path) if tp == "PDF" else _extract_img(path)
-    return _split(txt, fn, tp), tp
+def _process(fobj, fn):
+    fn_display = display_name(fn)
+    tp = _file_type(fn_display)
+    txt = _extract_pdf(fobj, fn_display) if tp == "PDF" else _extract_img(fobj, fn_display)
+    return _split(txt, fn_display, tp), tp
 
 # ─────────────────────── FAISS plumbing ─────────────────────────────────
 @st.cache_resource
@@ -177,148 +144,73 @@ def _emb():
 
 def _new_store():
     dim = len(_emb().embed_query("x"))
-    return FAISS(_emb(), faiss.IndexFlatL2(dim), InMemoryDocstore({}), {})
+    st.session_state["vector_store"] = FAISS(_emb(), faiss.IndexFlatL2(dim), InMemoryDocstore({}), {})
+    return st.session_state["vector_store"]
 
-@st.cache_resource
 def load_store():
-    try:
-        return FAISS.load_local(VECTOR_DIR, _emb())
-    except Exception:
-        return _new_store()
+    if st.session_state.get("vector_store") is not None:
+        return st.session_state["vector_store"]
+    return _new_store()
 
-def persist(store): store.save_local(VECTOR_DIR)
+def persist(store): st.session_state["vector_store"] = store
 
 # ───────────────── ingestion ────────────────────────────────────────────
-def add_to_db(path, h):
-    if h in st.session_state.processed_hashes:
-        return
-    chunks, tp = _process(path)
-    if not chunks:
-        st.warning(f"Skipped empty/unsupported: {display_name(os.path.basename(path))}")
-        return
-    fn = display_name(os.path.basename(path))
-    store = load_store()
-    store.add_texts(chunks, metadatas=[{"source": fn, "type": tp}] * len(chunks))
-    persist(store)
-    st.session_state.processed_hashes.add(h)
-    st.session_state.source_files.add(fn.lower())
-
-# ───────────────── bootstrap saved files ────────────────────────────────
-def _bootstrap_saved_files():
-    for h, fn in list(st.session_state.hash2file.items()):
-        full = os.path.join(UPLOAD_DIR, fn)
-        if os.path.exists(full):
-            add_to_db(full, h)
-        else:                                # file missing on disk
-            st.session_state.hash2file.pop(h, None)
-    _save_session()
-
-# ───────────────── retrieval helpers ────────────────────────────────────
-_TYPE_KW = {"pdf": "PDF", "document": "PDF",
-            "image": "IMAGE", "picture": "IMAGE", "screenshot": "IMAGE"}
-
-def _filters(q):
-    p = q.lower()
-    names = [n for n in st.session_state.source_files
-             if n in p or os.path.splitext(n)[0] in p]
-    types = {v for k, v in _TYPE_KW.items() if k in p}
-    return names, types
-
-def build_ctx(q, k=5):
-    if not st.session_state.processed_hashes:
-        return ""
-    names, types = _filters(q)
-    docs = load_store().similarity_search(q, k=20)
-    if names or types:
-        docs = [d for d in docs if
-                ((not names) or (d.metadata.get("source", "").lower() in names)) and
-                ((not types) or (d.metadata.get("type") in types))]
-    return "\n\n---\n\n".join(d.page_content for d in docs[:k])
-
-# ────────────────────────── LLM streaming ───────────────────────────────
-def _stream(resp, style):
-    for raw in resp.iter_lines():
-        if not raw or not raw.strip():
-            continue
-        line = raw.decode("utf-8", errors="ignore")
-        if line.startswith("data:"):
-            line = line[5:].lstrip()
-        if line == "[DONE]":
-            break
-        try:
-            chunk = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if style == "openai":
-            delta = chunk.get("choices", [{}])[0].get("delta", {})
-            if "content" in delta:
-                yield delta["content"]
-        elif style == "ollama":
-            msg = chunk.get("message", {})
-            if "content" in msg:
-                yield msg["content"]
-
-def chat_llm(prompt, spot):
-    msgs = (
-        [{"role": "system",
-          "content": ("Answer only from the context, and explain it in detail. "
-                      "Strictly cite the filename(s) used, strictly include backticks around the filename. "
-                      "If no answer is present, strictly and politely say that the sources do not contain the answer.")}]
-        + [m for m in st.session_state.messages if m["role"] != "system"]
-        + [{"role": "user", "content": prompt}]
-    )
-    p = dict(PROVIDERS[st.session_state.provider])
-    
-    if st.session_state.provider == "Local Ollama":
-        p["url"] = f"{st.session_state.ollama_host.rstrip('/')}/api/chat"
-        p["model"] = st.session_state.ollama_model
-    elif st.session_state.provider == "OpenRouter (free)":
-        p["model"] = st.session_state.openrouter_model
-
-    data = {"model": p["model"], "messages": msgs, "stream": True}
-
-    hdr = dict(p["headers"])
-    if p["env"]:
-        key = st.session_state.api_key or os.getenv(p["env"])
-        if not key:
-            spot.error(f"Add {p['env']} in sidebar or env variable")
-            return ""
-        hdr["Authorization"] = f"Bearer {key}"
-
-    ans = ""
-    try:
-        with requests.post(p["url"], json=data, headers=hdr,
-                           stream=True, timeout=120) as r:
-            r.raise_for_status()
-            for tok in _stream(r, p["stream_style"]):
-                ans += tok
-                spot.markdown(ans + "▌")
-        spot.markdown(ans)
-    except Exception as e:
-        ans = f"Error: {e}"
-        spot.error(ans)
-    return ans
-
-# ─────────────────────────── UI helpers ─────────────────────────────────
-def _handle(files):
+def add_many_to_db(files):
     if not files:
         return
+
+    all_chunks = []
+    all_metadatas = []
+    seen_in_batch = set()
+    added_names = set()
+    store = load_store()
+
     for u in files:
+        # Stream chunks to compute hash
+        hasher = hashlib.sha256()
+        u.seek(0)
+        while True:
+            chunk = u.read(8192)
+            if not chunk:
+                break
+            hasher.update(chunk)
+        h = hasher.hexdigest()
+        u.seek(0)
+
         uid = f"{u.name}-{u.size}"
         if uid in st.session_state.processed_uploads:
             continue
+
+        if h in st.session_state.processed_hashes or h in seen_in_batch:
+            st.session_state.processed_uploads.add(uid)
+            continue
+
+        seen_in_batch.add(h)
+
         with st.spinner(f"Processing {u.name} …"):
-            data = u.getvalue()
-            h = _sha256(data)
-            if h not in st.session_state.hash2file:
-                path = _dedup_path(u.name)
-                with open(path, "wb") as f:
-                    f.write(data)
-                st.session_state.hash2file[h] = os.path.basename(path)
-            add_to_db(os.path.join(UPLOAD_DIR, st.session_state.hash2file[h]), h)
-            st.success(f"Added: {u.name}")
-        st.session_state.processed_uploads.add(uid)
-    _save_session()
+            chunks, tp = _process(u, u.name)
+            if not chunks:
+                st.warning(f"Skipped empty/unsupported: {display_name(u.name)}")
+            else:
+                fn = display_name(u.name)
+                all_chunks.extend(chunks)
+                all_metadatas.extend([{"source": fn, "type": tp}] * len(chunks))
+                added_names.add(fn.lower())
+                st.success(f"Added: {u.name}")
+
+            st.session_state.processed_hashes.add(h)
+            st.session_state.processed_uploads.add(uid)
+
+    if all_chunks:
+        store.add_texts(all_chunks, metadatas=all_metadatas)
+        persist(store)
+        st.session_state.source_files.update(added_names)
+
+
+
+def _handle(files):
+    if files:
+        add_many_to_db(files)
 
 def sidebar():
     with st.sidebar:
@@ -356,7 +248,6 @@ def sidebar():
             )
             if k != st.session_state.api_key:
                 st.session_state.api_key = k
-                _save_session()
 
         _handle(st.file_uploader(
             "Upload PDFs", type="pdf", accept_multiple_files=True,
@@ -369,12 +260,6 @@ def sidebar():
         ))
 
         if st.button("Clear all data"):
-            for pth in (VECTOR_DIR, UPLOAD_DIR, SESSION_FILE):
-                if os.path.isdir(pth):
-                    _safe_rmtree(pth)
-                elif os.path.isfile(pth):
-                    os.remove(pth)
-            os.makedirs(UPLOAD_DIR, exist_ok=True)
             st.cache_resource.clear()
             st.session_state.clear()
             gc.collect()
@@ -394,7 +279,6 @@ def main():
     st.title("Chat with Multiple PDFs & Images")
 
     init_session()
-    _bootstrap_saved_files()
     sidebar()
     show_files()
 
